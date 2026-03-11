@@ -1376,78 +1376,137 @@ Standard Moodle plugin installation. Post-install setup wizard:
 
 ## 18. Implementation Phases
 
+Phases are sequenced to achieve a **testable end-to-end learner pipeline as early as possible**, then layer complexity on top of a working foundation. The principle: build the plumbing first, then plug in the intelligence.
+
 ### Phase 1: Content Tagging Foundation
+
+**Goal:** Establish the data layer everything else depends on.
+
 - CSF reference tables + topic tag library
-- Content metadata tables
-- Admin tagging UI
-- CSV bulk import
-- AI-assisted auto-tagging
-- **Expert review and scoring of existing content catalog** (parallel human effort)
+- Content metadata tables (`local_ocms_content`, `content_csf_tags`, `content_tags`, `tag_library`, `prerequisites`)
+- Admin tagging UI (list courses, assign CSF functions + relevance, set difficulty/mastery points)
+- CSV bulk import/export for initial population
+- AI-assisted auto-tagging (Claude content analysis → suggested tags for expert review)
+- **Expert review and scoring of existing content catalog** (parallel human effort — this is the calendar bottleneck)
 
-### Phase 2: Mastery Tracking Engine
-- Mastery event listener (Moodle course completion hook)
-- Dual-layer score calculation (CSF mastery + topic competency)
-- Competency level computation
-- Trend tracking
+**Exit criteria:** Existing course catalog is tagged with CSF functions, topic tags, difficulty scores, and mastery points. Tagging UI is functional.
+
+### Phase 2: Mastery Engine & Dashboard (Combined)
+
+**Goal:** Prove the data model works end-to-end and ship something visible to stakeholders.
+
+- Mastery event listener (Moodle `\core\event\course_completed` hook)
+- Dual-layer score calculation (CSF mastery + topic tag competency)
+- Competency level computation (novice/developing/proficient/expert)
+- Trend tracking (improving/stable/declining)
 - Mastery events audit log
-
-### Phase 3: Proficiency Dashboard (ship early for stakeholder buy-in)
-- Radar chart component
-- Cohort mastery cache
-- Individual learner overlays
-- Skills heatmap
-- Learner self-view dashboard
+- Radar chart component (6 CSF axes, cohort average polygon, individual overlays)
+- Cohort mastery cache + refresh mechanism
+- Skills heatmap (learners × tags, color-coded by competency)
+- Learner self-view dashboard (my radar, my assignments, my history)
 - API endpoints for mastery data
 
-### Phase 4: Proficiency Path Generator
-- LLM goal interpretation
-- LLM path generation (structured JSON output)
-- Operator review/edit/approve UI
-- Path step management
-- Branching engine
+**Exit criteria:** When a Moodle user completes a tagged course, their mastery scores update and are visible on the radar chart dashboard. Stakeholders can see the visualization with real data.
 
-### Phase 5: Campaign Management & Assignment
-- Campaign creation wizard
-- Enrollment management
-- Content assignment workflow (structured path + AI adaptive modes)
-- Progress tracking views
-- Cohort sync
+### Phase 3: The Learner Pipeline (MVP)
 
-### Phase 6: Email Simulations
-- Simulation authoring interface
-- Simulation delivery mechanism
-- Annotation/education pages
-- Engagement tracking
-- Integration with mastery tracking
-- Integration with proficiency paths as steps
+**Goal:** Achieve a complete, testable learner journey — enroll user, send email, user takes training via token link, mastery updates, manager sees progress. This is the **Minimum Viable Product**.
 
-### Phase 7: Messaging & Notifications
-- Email template system with mastery-aware placeholders
-- Assignment/reminder/milestone notifications
-- Manager digest with inline radar charts
-- Simulation follow-up emails
+Split into two sub-phases to prevent auth complexity from blocking the campaign pipeline:
 
-### Phase 8: Passwordless Auth & External Integrations
-- Token authentication plugin
-- AWS SNS integration
-- Moodle 5 custom reporting integration
-- Web services API finalization
+#### Phase 3a: Campaign Assignment & Messaging
+
+- Campaign creation wizard (basic version — Sequential and Tag-Weighted modes only, no AI yet)
+- Enrollment management (manual + cohort-based)
+- Content assignment workflow for non-AI modes
+- Cohort sync (event-based enrollment on cohort membership changes)
+- Progress tracking views (who's on what, completion status)
+- Email template system with placeholder rendering
+- Assignment notification emails
+- Reminder emails (configurable frequency, max reminders)
+- Milestone notifications ("You've reached 75% proficiency in Detect!")
+- Manager digest emails (cohort radar chart, completion stats, stuck learners)
+
+**Exit criteria:** Operator can create a campaign, assign a cohort, learners receive assignment emails, complete courses via standard Moodle login, mastery updates, manager gets digest. Full pipeline works for internal Moodle-authenticated users.
+
+#### Phase 3b: Passwordless Token Authentication
+
+- `auth_aattoken` plugin
+- Token generation, validation, expiration, revocation
+- Token-only access mode (learner accesses assigned content only)
+- Token-to-session promotion (optional)
+- Auto-creation of minimal user accounts for external learners
+- Account upgrade path (claim account by setting password)
+- Rate limiting (10 validation attempts per IP per minute)
+- Integration with assignment emails (token links in `{{ACCESS_LINK}}` / `{{ACCESS_BUTTON}}`)
+
+**Exit criteria:** External learner with no Moodle account clicks a token link in their assignment email, accesses their training, completes it, mastery updates. Full pipeline works for external users.
+
+**Why this split:** If token auth hits complications (and Moodle auth plugins often do), Phase 3a is still fully testable with standard Moodle-authenticated users. 3b adds external learner access without blocking internal testing.
+
+### Phase 4: AI Proficiency Path Generator
+
+**Goal:** Add intelligent, adaptive path generation on top of the working campaign pipeline. The AI becomes a new content selection mode plugged into existing plumbing.
+
+- LLM goal interpretation (natural language → CSF focus areas, tag priorities, competency targets)
+- LLM path generation (tagged content catalog + constraints → structured JSON path with standard/challenge/remediation tracks)
+- Operator review/edit/approve UI for generated paths
+- Path step management (ordering, branching conditions, simulation placement)
+- Branching engine (evaluates learner performance at branch points, routes to appropriate track)
+- `structured_path` and `ai_adaptive` selection modes added to campaign wizard
+- Edge case handling: content retired mid-path, learner already completed a course, path regeneration
+
+**Exit criteria:** Operator describes training goals in natural language, LLM generates a proficiency path, operator approves it, learners are enrolled and follow the path with adaptive branching based on their performance. Branching decisions are visible in the progress tracking views.
+
+### Phase 5: Informative Email Simulations
+
+**Goal:** Add teaching-oriented email simulations as a specialized content type within proficiency paths.
+
+- Simulation authoring interface (email content, annotations, education page)
+- Simulation delivery mechanism (integrated with existing email infrastructure from Phase 3a)
+- Annotation/education landing pages (red flag highlights → threat education → next training link)
+- Engagement tracking (delivered, opened, annotations viewed, education page viewed, next training clicked)
+- CSF function and topic tag tagging for simulations (same schema as courses)
+- Integration with mastery tracking (simulation engagement → mastery events)
+- Integration with proficiency paths as steps (simulations can replace standard enrollment emails at configured branch points)
+
+**Exit criteria:** A proficiency path step can deliver an informative simulation email instead of a standard assignment. Learner receives realistic threat email, views annotations, reads education page, clicks through to next training. Engagement counts as a mastery event.
+
+### Phase 6: External Integrations & Polish
+
+**Goal:** Enterprise-tier features that are only valuable once the core system generates stable, accurate data.
+
+- AWS SNS event publishing (mastery updates, completions, enrollment events)
+- Moodle 5 custom reporting integration (report source, pre-built templates, scheduled reports)
+- Web services API finalization and documentation
+- Mastery decay implementation (optional scheduled task)
+- LTI 1.3 provider (future)
+- xAPI/Learning Record Store integration (future)
+
+**Exit criteria:** External systems can subscribe to AAT events via SNS. Moodle 5 reporting can query all AAT data. API is documented and stable.
 
 ### Dependency Graph
 
 ```
 Phase 1 (Tagging)
-  ├──→ Phase 2 (Mastery Tracking)
-  │      ├──→ Phase 3 (Dashboard)        ← ship early
-  │      ├──→ Phase 4 (Path Generator)
-  │      │      ├──→ Phase 5 (Campaigns)
-  │      │      ├──→ Phase 6 (Email Sims)
-  │      │      └──→ Phase 7 (Messaging)
-  │      └──→ Phase 6 (sims need mastery tracking)
-  └──→ Phase 4 (path gen needs tagged content)
-
-Phase 8 (Auth & Integrations) — independent, can parallel with Phase 3+
+  │
+  ├──→ Phase 2 (Mastery Engine + Dashboard)     ← stakeholder buy-in
+  │      │
+  │      └──→ Phase 3a (Campaigns + Messaging)   ← MVP for internal users
+  │             │
+  │             ├──→ Phase 3b (Token Auth)        ← MVP for external users
+  │             │                                    (can parallel with Phase 4 if 3a is stable)
+  │             │
+  │             └──→ Phase 4 (AI Path Generator)  ← plugs into working pipeline
+  │                    │
+  │                    ├──→ Phase 5 (Email Sims)  ← specialized content type
+  │                    │
+  │                    └──→ Phase 6 (Integrations) ← enterprise polish
+  │
+  └──→ Expert content tagging (parallel human effort throughout Phases 1-2)
 ```
+
+**Key insight:** After Phase 3a, you have a working product. Every subsequent phase adds capability to a system that is already testable, deployable, and generating real data. The AI path generator (Phase 4) is the most complex and riskiest component — but by the time you build it, you have a stable pipeline to immediately test its output against.
 
 ---
 
@@ -1457,3 +1516,4 @@ Phase 8 (Auth & Integrations) — independent, can parallel with Phase 3+
 |---------|------|---------|
 | 1.0 | 2026-01-26 | Initial OCMS integration requirements draft |
 | 2.0 | 2026-03-11 | Unified with mastery system plan; added NIST CSF alignment, proficiency paths, email simulations, radar dashboard, dual-layer taxonomy |
+| 2.1 | 2026-03-11 | Restructured implementation phases for end-to-end testability; pulled campaigns, messaging, and token auth forward to Phase 3 (MVP); pushed AI path generator to Phase 4 |
